@@ -1,2 +1,4 @@
 BioHEL.tar.gz
 postprocessing.tar.gz
+*.pyc
+__pycache__/
