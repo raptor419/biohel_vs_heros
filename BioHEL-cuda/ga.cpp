@@ -69,8 +69,8 @@ void freeInstanceMemory() {
 
 
 int rankOrder(const void *pA, const void *pB) {
-	rank_t *a = (rank_t *) pA;
-	rank_t *b = (rank_t *) pB;
+	rank *a = (rank *) pA;
+	rank *b = (rank *) pB;
 
 	return a->ind->compareToIndividual2(b->ind, optimizationMethod);
 }
@@ -82,7 +82,7 @@ void geneticAlgorithm::createPopulationRank() {
 		populationRank[i].pos = i;
 		populationRank[i].ind = population[i];
 	}
-	qsort(populationRank, popSize, sizeof(rank_t), rankOrder);
+	qsort(populationRank, popSize, sizeof(rank), rankOrder);
 }
 
 void geneticAlgorithm::initializePopulation() {
@@ -105,7 +105,7 @@ void geneticAlgorithm::initializePopulation() {
 		}
 	}
 
-	populationRank = new rank_t[popSize];
+	populationRank = new rank[popSize];
 	flagResetBest=0;
 	currentIteration = 0;
 }
@@ -143,7 +143,7 @@ void geneticAlgorithm::initializeBalancedPopulation()
                 }
         }
 
-        populationRank = new rank_t[popSize];
+        populationRank = new rank[popSize];
         flagResetBest=0;
         currentIteration = 0;
 }

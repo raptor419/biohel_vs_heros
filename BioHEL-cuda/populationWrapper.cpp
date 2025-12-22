@@ -18,12 +18,12 @@ void populationWrapper::activateModifiedFlag()
 {
 	int i;
 
-	rank_t *rk=ga->getPopulationRank();
+	rank *rk=ga->getPopulationRank();
 	for(i=0;i<popSize;i++) rk[i].ind->activateModified();
 	ga->resetBest();
 }
 
-rank_t *populationWrapper::getPopulationRank()
+rank *populationWrapper::getPopulationRank()
 {
 	int i;
 
@@ -61,13 +61,13 @@ classifier **populationWrapper::getPopulation()
 
 classifier *populationWrapper::getBestPopulation()
 {
-	rank_t *rk=ga->getPopulationRank();
+	rank *rk=ga->getPopulationRank();
 	return (classifier *)rk[0].ind;
 }
 
 classifier *populationWrapper::getWorstPopulation()
 {
-	rank_t *rk=ga->getPopulationRank();
+	rank *rk=ga->getPopulationRank();
 	return (classifier *)rk[popSize - 1].ind;
 }
 
@@ -76,7 +76,7 @@ double populationWrapper::getAverageLength()
 	int i;
 	double ave=0;
 
-	rank_t *rk=ga->getPopulationRank();
+	rank *rk=ga->getPopulationRank();
 
 	for(i=0;i<popSize;i++) ave+=rk[i].ind->getLength();
 
@@ -89,7 +89,7 @@ void populationWrapper::getAverageDevAccuracy(double &ave,double &dev)
 	ave=0;
 	dev=0;
 
-	rank_t *rk=ga->getPopulationRank();
+	rank *rk=ga->getPopulationRank();
 
 	for(i=0;i<popSize;i++) {
 		double acc=((classifier *)rk[i].ind)->getAccuracy();
@@ -107,7 +107,7 @@ void populationWrapper::getAverageAccuracies(double &ave1,double &ave2)
 	int i;
 	ave1=0;
 	ave2=0;
-	rank_t *rk=ga->getPopulationRank();
+	rank *rk=ga->getPopulationRank();
 
 	for(i=0;i<popSize;i++) {
 		ave1+=((classifier *)rk[i].ind)->getAccuracy();
@@ -123,7 +123,7 @@ double populationWrapper::getMaxAccuracy()
 {
 	int i;
 
-	rank_t *rk=ga->getPopulationRank();
+	rank *rk=ga->getPopulationRank();
 	double max=((classifier *)rk[0].ind)->getAccuracy();
 
 	for(i=1;i<popSize;i++) {

@@ -24,7 +24,7 @@ public:
 	classifier *getWorstPopulation();
 	classifier **getPopulation();
 	void releasePopulation();
-	rank_t *getPopulationRank();
+	rank *getPopulationRank();
 	double getAverageLength();
 	double getAverageElements();
 	double getAverageAliveElements();

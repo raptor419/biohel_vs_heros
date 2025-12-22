@@ -10,7 +10,7 @@
 typedef struct {
         int pos;
         classifier *ind;
-} rank_t;
+} rank;
 
 extern instanceSet *is;
 
@@ -20,7 +20,7 @@ class geneticAlgorithm {
 	int popSize;
 	classifierFactory *cf;
 	classifier **population, **offspringPopulation;
-	rank_t *populationRank;
+	rank *populationRank;
 	int flagResetBest;
 	int numVersions;
 	classifier **best;
@@ -50,7 +50,7 @@ public:
 	classifier *getWorst() {
 		return population[populationRank[popSize - 1].pos];
 	}
-	rank_t *getPopulationRank() { return populationRank; }
+	rank *getPopulationRank() { return populationRank; }
 	void resetBest();
 		void createPopulationRank();
 };
