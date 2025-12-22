@@ -15,8 +15,7 @@ Comparison of BioHEL and HEROS rule-learning algorithms on benchmark datasets.
 
 ## Usage
 
-1. Start Docker Desktop
-2. Run the notebook: `biohel_heros_comparison.ipynb`
+1. Run the pyhon file: `run_experiments.py `
 
 The notebook will:
 - Train HEROS on all datasets
