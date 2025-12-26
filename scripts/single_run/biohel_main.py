@@ -127,7 +127,7 @@ def main() -> None:
     p.add_argument(
         "--hpc",
         choices=["lsf", "slurm", "local"],
-        default="slurm",
+        default="lsf",
         help="Scheduler type: lsf, slurm, or local (no submission)",
     )
 
@@ -139,7 +139,7 @@ def main() -> None:
     p.add_argument("--biohel-bin", default="./biohel", help="BioHEL binary path or command")
 
     # LSF-specific
-    p.add_argument("--queue", default="defq", help="LSF queue (-q) [used when --hpc=lsf], SLURM eqivalent to partition")
+    p.add_argument("--queue", default="i2c2_normal", help="LSF queue (-q) [used when --hpc=lsf], SLURM eqivalent to partition")
 
     # Selection
     p.add_argument(
