@@ -28,18 +28,8 @@ def _ensure_numeric(df: pd.DataFrame, cols: List[str]) -> pd.DataFrame:
 
 
 def _make_eval_df_from_result_row(result_row_path: Path) -> pd.DataFrame:
-    """
-    Convert BioHEL's per-fold result_row.csv into a HEROS-like evaluation_summary.csv
-    structure with a single evaluation point: Row Indexes == 'final'.
-
-    HEROS expects:
-      - a column 'Row Indexes'
-      - other metric columns numeric
-    """
     rr = _safe_read_csv(result_row_path)
 
-    # Normalize column names we want to carry forward
-    # Keep a stable set across versions; missing ones become NaN.
     wanted_cols = [
         "train_accuracy",
         "test_accuracy",
@@ -50,7 +40,10 @@ def _make_eval_df_from_result_row(result_row_path: Path) -> pd.DataFrame:
         "num_rules",
         "runtime",
         "wall_time",
+        "postprocess_wall_time",
+        "postprocess_num_rules",
     ]
+
     row = {}
     for c in wanted_cols:
         row[c] = rr[c].iloc[0] if c in rr.columns and len(rr) else np.nan
@@ -63,21 +56,11 @@ def _make_eval_df_from_result_row(result_row_path: Path) -> pd.DataFrame:
 def main(argv):
     parser = argparse.ArgumentParser(description="BioHEL summary job (HEROS-compatible outputs)")
 
-    # Script Parameters
     parser.add_argument("--o", dest="outputPath", type=str, required=True,
                         help="Path to BioHEL_<analysis> output folder (contains dataset subfolders)")
-
-    # Keep these args for interface parity with HEROS (not strictly needed for BioHEL summary)
-    # parser.add_argument("--ol", dest="outcome_label", type=str, default="Class")
-    # parser.add_argument("--il", dest="instanceID_label", type=str, default="InstanceID")
-    # parser.add_argument("--el", dest="excluded_column", type=str, default="Group")
-
-    # Experiment Parameters
     parser.add_argument("--cv", dest="cv_partitions", type=int, default=10)
     parser.add_argument("--r", dest="random_seeds", type=int, default=30)
-
-    parser.add_argument("--plots", dest="plots", action="store_true",
-                        help="If set, generate boxplots like HEROS")
+    parser.add_argument("--plots", dest="plots", action="store_true")
 
     options = parser.parse_args(argv[1:])
 
@@ -89,7 +72,6 @@ def main(argv):
     if not outputPath.exists():
         raise FileNotFoundError(f"Output path does not exist: {outputPath}")
 
-    # Metrics we aggregate (superset; missing values allowed)
     metric_cols = [
         "train_accuracy",
         "test_accuracy",
@@ -100,12 +82,11 @@ def main(argv):
         "num_rules",
         "runtime",
         "wall_time",
+        "postprocess_wall_time",
+        "postprocess_num_rules",
     ]
 
-    # ----------------------------
-    # 1) Create CV-level evaluation_summary.csv files (HEROS compatibility)
-    #    (Optional but strongly recommended for consistency)
-    # ----------------------------
+    # 1) Ensure evaluation_summary.csv exists per cv folder (HEROS-style interface)
     for entry in os.listdir(outputPath):
         data_level_path = outputPath / entry
         if not data_level_path.is_dir():
@@ -123,7 +104,6 @@ def main(argv):
 
                 eval_path = cv_level_path / "evaluation_summary.csv"
                 if eval_path.exists():
-                    # already there; do not overwrite
                     continue
 
                 rr_path = cv_level_path / "result_row.csv"
@@ -131,12 +111,7 @@ def main(argv):
                     eval_df = _make_eval_df_from_result_row(rr_path)
                     eval_df.to_csv(eval_path, index=False)
 
-    # ----------------------------
-    # 2) Seed-level CV summaries (mean/sd across CV folds)
-    #    Output filenames match HEROS:
-    #      seed_i/mean_CV_evaluation_summary.csv
-    #      seed_i/sd_CV_evaluation_summary.csv
-    # ----------------------------
+    # 2) Seed-level CV summaries: mean/sd across CV folds
     for entry in os.listdir(outputPath):
         data_level_path = outputPath / entry
         if not data_level_path.is_dir():
@@ -168,22 +143,15 @@ def main(argv):
             if not dfs:
                 continue
 
-            # Mean across CV folds
             ave_df_x = pd.concat(dfs).groupby(level=0).mean()
             mean_df = pd.concat([row_names, ave_df_x], axis=1)
             mean_df.to_csv(seed_level_path / "mean_CV_evaluation_summary.csv", index=False)
 
-            # SD across CV folds
             sd_df_x = pd.concat(dfs).groupby(level=0).std()
             sd_df = pd.concat([row_names, sd_df_x], axis=1)
             sd_df.to_csv(seed_level_path / "sd_CV_evaluation_summary.csv", index=False)
 
-    # ----------------------------
-    # 3) Dataset-level seed summaries (mean/sd across seeds)
-    #    Output filenames match HEROS:
-    #      mean_seed_evaluation_summary.csv
-    #      sd_seed_evaluation_summary.csv
-    # ----------------------------
+    # 3) Dataset-level seed summaries: mean/sd across seeds
     for entry in os.listdir(outputPath):
         data_level_path = outputPath / entry
         if not data_level_path.is_dir():
@@ -218,23 +186,14 @@ def main(argv):
         sd_df = pd.concat([row_names, sd_df_x], axis=1)
         sd_df.to_csv(data_level_path / "sd_seed_evaluation_summary.csv", index=False)
 
-    # ----------------------------
-    # 4) Global results lists (HEROS style)
-    #    Since BioHEL only has one evaluation point, we use:
-    #      Row Indexes == 'final'
-    #
-    # Output filenames match HEROS pattern:
-    #   all_final_evaluations.csv         (all seed×cv)
-    #   cv_ave_final_evaluations.csv      (CV-averaged per seed)
-    # ----------------------------
+    # 4) Global results lists (HEROS-style patterns)
+    #    BioHEL uses a single evaluation point: "final"
     for entry in os.listdir(outputPath):
         data_level_path = outputPath / entry
         if not data_level_path.is_dir():
             continue
 
-        # all runs (seed×cv)
         rows_all = []
-
         for i in range(0, random_seeds):
             seed_level_path = data_level_path / f"seed_{i}"
             if not seed_level_path.is_dir():
@@ -254,10 +213,9 @@ def main(argv):
 
         if rows_all:
             df_all = pd.DataFrame(rows_all)
-            df_all = _ensure_numeric(df_all, metric_cols)
+            df_all = _ensure_numeric(df_all, metric_cols + ["Seed", "CV"])
             df_all.to_csv(data_level_path / "all_final_evaluations.csv", index=False)
 
-        # CV-averaged per seed (seed-level mean across cv)
         rows_cv_ave = []
         for i in range(0, random_seeds):
             seed_level_path = data_level_path / f"seed_{i}"
@@ -268,7 +226,6 @@ def main(argv):
             df = _safe_read_csv(mean_path)
             df = _ensure_numeric(df, metric_cols)
 
-            # pick the 'final' row
             if "Row Indexes" not in df.columns:
                 continue
             df_final = df[df["Row Indexes"] == "final"].copy()
@@ -281,19 +238,11 @@ def main(argv):
 
         if rows_cv_ave:
             df_cv_ave = pd.DataFrame(rows_cv_ave)
-            df_cv_ave = _ensure_numeric(df_cv_ave, metric_cols)
+            df_cv_ave = _ensure_numeric(df_cv_ave, metric_cols + ["Seed"])
             df_cv_ave.to_csv(data_level_path / "cv_ave_final_evaluations.csv", index=False)
 
-    # ----------------------------
-    # 5) Plots (HEROS-consistent filenames)
-    # ----------------------------
+    # 5) Plots (HEROS-consistent filenames + coverage additions)
     if make_plots:
-        # These replicate HEROS output filenames:
-        #   boxplot_testing_accuracy_all.png
-        #   boxplot_rule_count_all.png
-        # And add coverage plots with consistent naming:
-        #   boxplot_testing_coverage_all.png
-        #   boxplot_train_coverage_all.png
         for entry in os.listdir(outputPath):
             data_level_path = outputPath / entry
             if not data_level_path.is_dir():
@@ -306,17 +255,15 @@ def main(argv):
             df_all = _safe_read_csv(all_path)
             df_all = _ensure_numeric(df_all, metric_cols + ["Seed", "CV"])
 
-            # Test accuracy boxplot (all runs)
             if "test_accuracy" in df_all.columns:
                 plt.figure(figsize=(10, 6))
                 sns.boxplot(data=df_all, y="test_accuracy")
                 plt.xlabel("")
                 plt.ylabel("Test Accuracy")
-                plt.title("Balanced Testing Accuracy (All Runs)")  # keep generic title
+                plt.title("Balanced Testing Accuracy (All Runs)")
                 plt.savefig(data_level_path / "boxplot_testing_accuracy_all.png", bbox_inches="tight")
                 plt.close()
 
-            # Rule count boxplot (all runs) -> BioHEL uses num_rules; keep filename consistent
             if "num_rules" in df_all.columns:
                 plt.figure(figsize=(10, 6))
                 sns.boxplot(data=df_all, y="num_rules")
@@ -326,7 +273,6 @@ def main(argv):
                 plt.savefig(data_level_path / "boxplot_rule_count_all.png", bbox_inches="tight")
                 plt.close()
 
-            # Coverage plots (new but consistent naming)
             if "test_coverage" in df_all.columns:
                 plt.figure(figsize=(10, 6))
                 sns.boxplot(data=df_all, y="test_coverage")

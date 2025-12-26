@@ -7,7 +7,7 @@ from pathlib import Path
 
 
 def main(argv):
-    parser = argparse.ArgumentParser(description="Submit RIPPER summary job (HEROS-like outputs)")
+    parser = argparse.ArgumentParser(description="Submit BioHEL summary job (HEROS-like outputs)")
 
     parser.add_argument("--w", dest="writepath", type=str, required=True)
     parser.add_argument("--o", dest="outputfolder", type=str, required=True)
@@ -35,7 +35,7 @@ def main(argv):
     queue = opts.queue
     plots = bool(opts.plots)
 
-    algorithm = "RIPPER"
+    algorithm = "BioHEL"
 
     base_output_path_0 = writepath / "output" / f"{algorithm}_{outputfolder}"
     if not base_output_path_0.exists():
@@ -48,11 +48,11 @@ def main(argv):
     logPath.mkdir(parents=True, exist_ok=True)
 
     job_ref = str(time.time())
-    job_name = f"RIPPER_summary_{outputfolder}_{job_ref}"
+    job_name = f"BIOHEL_summary_{outputfolder}_{job_ref}"
     job_path = scratchPath / f"{job_name}_run.sh"
 
     cmd = (
-        f"python job_ripper_sum_hpc.py"
+        f"python job_biohel_sum_hpc.py"
         f" --o {base_output_path_0}"
         f" --cv {cv_partitions}"
         f" --r {random_seeds}"
@@ -76,7 +76,8 @@ def main(argv):
             sh.write(f"#SBATCH --mem={reserved_memory}G\n")
             sh.write(f"#SBATCH -o {logPath}/{job_name}.o\n")
             sh.write(f"#SBATCH -e {logPath}/{job_name}.e\n")
-    
+            sh.write("srun " + cmd + "\n")
+            
     if run_cluster == "LSF":
         os.system(f"bsub < {job_path}")
     else:

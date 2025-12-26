@@ -10,14 +10,14 @@ import argparse
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
 
 
 # -----------------------------
-# Data + ARFF helpers
+# ARFF + config
 # -----------------------------
 def load_df(path: str) -> pd.DataFrame:
     return pd.read_csv(path, sep="\t")
@@ -34,10 +34,6 @@ def build_feature_names(df: pd.DataFrame, outcome_label: str, instanceID_label: 
 
 
 def convert_to_arff(df: pd.DataFrame, feature_names: List[str], outcome_label: str, filename: Path, relation_name: str) -> None:
-    """
-    Writes a simple discrete ARFF.
-    Assumes all features + class are categorical integer-like values.
-    """
     with open(filename, "w") as f:
         f.write(f"@RELATION {relation_name}\n\n")
 
@@ -58,10 +54,6 @@ def convert_to_arff(df: pd.DataFrame, feature_names: List[str], outcome_label: s
 
 
 def create_biohel_config(output_path: Path, seed: int) -> None:
-    """
-    Baseline config (your earlier one) + inject random seed.
-    Adjust any values here as needed; this is the canonical single source.
-    """
     config_content = f"""crossover operator 1px
 default class major
 fitness function mdl
@@ -96,140 +88,119 @@ random seed {seed}
 
 
 # -----------------------------
-# Rule parsing + coverage
+# Rule parsing + application
+# Supports:
+#   - BioHEL phenotype lines: "0:Att A_0 is 1|...|1"
+#   - RPE ruleset lines:      "Att A_0 is 1|...|1"
+#   - Default rule:           "Default rule -> 0"
 # -----------------------------
 @dataclass(frozen=True)
 class ParsedRule:
-    rule_id: int
-    conditions: Dict[str, int]   # {"A_0": 1, ...}
+    order: int
+    conditions: Dict[str, int]
     prediction: int
     is_default: bool = False
 
 
-_RULE_HEADER_RE = re.compile(r"^\s*(\d+)\s*:(.*)$")
 _COND_RE = re.compile(r"Att\s+([A-Za-z0-9_]+)\s+is\s+([-+]?\d+)")
-_DEFAULT_RE = re.compile(r"Default\s+rule\s*->\s*([-+]?\d+)", re.IGNORECASE)
+_DEFAULT_RE = re.compile(r"^\s*(?:\d+:)?\s*Default rule\s*->\s*([-+]?\d+)\s*$", re.IGNORECASE)
+_PREFIX_RE = re.compile(r"^\s*\d+\s*:\s*")
 
 
-def parse_biohel_rule_line(line: str) -> Optional[ParsedRule]:
-    line = line.strip()
-    if not line:
-        return None
-
-    # Default rule (may or may not have "12:" prefix)
-    mdef = _DEFAULT_RE.search(line)
-    if mdef:
-        mid = _RULE_HEADER_RE.match(line)
-        rule_id = int(mid.group(1)) if mid else -1
-        pred = int(mdef.group(1))
-        return ParsedRule(rule_id=rule_id, conditions={}, prediction=pred, is_default=True)
-
-    m = _RULE_HEADER_RE.match(line)
-    if not m:
-        return None
-
-    rule_id = int(m.group(1))
-    rhs = m.group(2).strip()
-
-    parts = [p.strip() for p in rhs.split("|") if p.strip()]
-    if not parts:
-        return None
-
-    try:
-        pred = int(parts[-1])
-    except ValueError:
-        return None
-
-    cond_text = "|".join(parts[:-1])
-    conds: Dict[str, int] = {}
-    for feat, val in _COND_RE.findall(cond_text):
-        conds[feat] = int(val)
-
-    return ParsedRule(rule_id=rule_id, conditions=conds, prediction=pred, is_default=False)
-
-
-def parse_biohel_rules(rule_lines: List[str]) -> Tuple[List[ParsedRule], Optional[ParsedRule]]:
+def parse_ruleset_lines(lines: List[str]) -> Tuple[List[ParsedRule], Optional[ParsedRule]]:
     rules: List[ParsedRule] = []
     default_rule: Optional[ParsedRule] = None
 
-    for ln in rule_lines:
-        pr = parse_biohel_rule_line(ln)
-        if pr is None:
+    order = 0
+    for raw in lines:
+        line = raw.strip()
+        if not line:
             continue
-        if pr.is_default:
-            default_rule = pr
-        else:
-            rules.append(pr)
 
-    rules.sort(key=lambda r: r.rule_id)
+        mdef = _DEFAULT_RE.match(line)
+        if mdef:
+            default_rule = ParsedRule(order=10**9, conditions={}, prediction=int(mdef.group(1)), is_default=True)
+            continue
+
+        # strip "0:" prefix if present
+        line = _PREFIX_RE.sub("", line)
+
+        parts = [p.strip() for p in line.split("|") if p.strip()]
+        if not parts:
+            continue
+
+        try:
+            pred = int(parts[-1])
+        except ValueError:
+            continue
+
+        cond_text = "|".join(parts[:-1])
+        conds: Dict[str, int] = {}
+        for feat, val in _COND_RE.findall(cond_text):
+            conds[feat] = int(val)
+
+        rules.append(ParsedRule(order=order, conditions=conds, prediction=pred, is_default=False))
+        order += 1
+
     return rules, default_rule
 
 
-def compute_rule_coverage(df: pd.DataFrame, rules: List[ParsedRule], excluded_columns: List[str]) -> Dict[str, float]:
+def apply_ruleset_predict(df: pd.DataFrame, rules: List[ParsedRule], default_rule: Optional[ParsedRule],
+                          excluded_columns: List[str]) -> Tuple[np.ndarray, np.ndarray]:
     """
-    Coverage = fraction matched by at least one NON-default rule.
-    Default fall-through rate = 1 - coverage.
+    Returns:
+      y_pred: predicted labels for ALL instances (default fills uncovered)
+      covered: boolean array True if covered by ANY non-default rule
     """
     X = df.drop(columns=[c for c in excluded_columns if c in df.columns], errors="ignore")
     n = len(X)
-    if n == 0:
-        return {"coverage": float("nan"), "default_rate": float("nan")}
+    covered = np.zeros(n, dtype=bool)
 
-    matched_any = np.zeros(n, dtype=bool)
+    # initialize with default prediction
+    if default_rule is None:
+        # If absent, choose the most frequent class in the data if Class exists; else 0
+        default_pred = int(df["Class"].mode().iloc[0]) if "Class" in df.columns and not df["Class"].mode().empty else 0
+    else:
+        default_pred = default_rule.prediction
 
-    for r in rules:
+    y_pred = np.full(n, default_pred, dtype=int)
+
+    # apply in order: first match wins (typical ruleset semantics)
+    undecided = np.ones(n, dtype=bool)
+
+    for r in sorted(rules, key=lambda rr: rr.order):
         if not r.conditions:
-            matched_any |= True
-            continue
+            # condition-less rule matches everything still undecided
+            hit = undecided.copy()
+        else:
+            hit = undecided.copy()
+            for feat, val in r.conditions.items():
+                if feat not in X.columns:
+                    hit &= False
+                    break
+                hit &= (X[feat].astype(int).values == int(val))
 
-        mask = np.ones(n, dtype=bool)
-        for feat, val in r.conditions.items():
-            if feat not in X.columns:
-                mask &= False
-                break
-            mask &= (X[feat].astype(int).values == int(val))
+        if hit.any():
+            y_pred[hit] = int(r.prediction)
+            covered[hit] = True
+            undecided[hit] = False
 
-        matched_any |= mask
-        if matched_any.all():
+        if not undecided.any():
             break
 
-    coverage = float(matched_any.mean())
-    return {"coverage": coverage, "default_rate": float(1.0 - coverage)}
+    return y_pred, covered
 
 
-def per_rule_match_counts(df: pd.DataFrame, rules: List[ParsedRule], excluded_columns: List[str]) -> pd.DataFrame:
-    X = df.drop(columns=[c for c in excluded_columns if c in df.columns], errors="ignore")
-    n = len(X)
-    rows = []
-    for r in rules:
-        mask = np.ones(n, dtype=bool)
-        for feat, val in r.conditions.items():
-            if feat not in X.columns:
-                mask &= False
-                break
-            mask &= (X[feat].astype(int).values == int(val))
-        rows.append(
-            {
-                "rule_id": r.rule_id,
-                "prediction": r.prediction,
-                "n_conditions": len(r.conditions),
-                "n_matched": int(mask.sum()),
-                "frac_matched": float(mask.mean()) if n else float("nan"),
-            }
-        )
-    return pd.DataFrame(rows).sort_values("rule_id")
+def coverage_from_covered(covered: np.ndarray) -> float:
+    return float(np.mean(covered)) if covered.size else float("nan")
 
 
 # -----------------------------
-# BioHEL stdout parsing
+# BioHEL output extraction
 # -----------------------------
 def extract_phenotype_rules(stdout: str) -> List[str]:
-    """
-    Extract rule lines between 'Phenotype:' and the first blank line / Train line.
-    Matches your earlier extractor but slightly more defensive.
-    """
     lines = stdout.splitlines()
-    rules: List[str] = []
+    out: List[str] = []
     in_pheno = False
     for ln in lines:
         if ln.startswith("Phenotype:"):
@@ -240,54 +211,115 @@ def extract_phenotype_rules(stdout: str) -> List[str]:
                 break
             if ln.startswith("Train"):
                 break
-            rules.append(ln.rstrip())
-    return rules
+            out.append(ln.rstrip())
+    return out
 
 
-def parse_biohel_metrics(stdout: str, wall_time: float) -> Dict[str, Any]:
-    metrics: Dict[str, Any] = {
-        "wall_time": float(wall_time),
-        "train_accuracy": None,
-        "test_accuracy": None,
-        "runtime": None,
-        "num_rules": 0,
-        "rules": [],
-    }
-
+def parse_biohel_train_test_accuracy(stdout: str) -> Tuple[Optional[float], Optional[float], Optional[float]]:
+    train_acc = None
+    test_acc = None
+    runtime = None
     for line in stdout.splitlines():
         if "Train accuracy :" in line:
             m = re.search(r"Train accuracy\s*:\s*([\d.]+)", line)
             if m:
-                metrics["train_accuracy"] = float(m.group(1))
+                train_acc = float(m.group(1))
         if "Test accuracy :" in line:
             m = re.search(r"Test accuracy\s*:\s*([\d.]+)", line)
             if m:
-                metrics["test_accuracy"] = float(m.group(1))
+                test_acc = float(m.group(1))
         if "Total time:" in line:
             m = re.search(r"Total time:\s*([\d.]+)", line)
             if m:
-                metrics["runtime"] = float(m.group(1))
+                runtime = float(m.group(1))
+    return train_acc, test_acc, runtime
 
-    rule_lines = extract_phenotype_rules(stdout)
-    metrics["rules"] = [r.strip() for r in rule_lines if r.strip()]
-    metrics["num_rules"] = sum(1 for r in metrics["rules"] if "Default rule" not in r)
 
-    return metrics
+# -----------------------------
+# RPE integration
+# -----------------------------
+_RULE_ID_PREFIX = re.compile(r"^\s*\d+\s*:\s*")
+
+
+def write_ruleset_for_rpe(phenotype_lines: List[str], out_path: Path) -> int:
+    """
+    Convert BioHEL phenotype to RPE ruleset:
+      - strip leading "id:" from each rule
+      - include Default rule line
+    """
+    rules_out = []
+    default_line = None
+
+    for ln in phenotype_lines:
+        s = ln.strip()
+        if not s:
+            continue
+        if "Default rule" in s:
+            default_line = _RULE_ID_PREFIX.sub("", s)
+            continue
+        # normal rule
+        rules_out.append(_RULE_ID_PREFIX.sub("", s))
+
+    if default_line is None:
+        # BioHEL sometimes prints default outside phenotype; try to locate in original lines
+        for ln in phenotype_lines:
+            if "Default rule" in ln:
+                default_line = _RULE_ID_PREFIX.sub("", ln.strip())
+                break
+
+    if default_line is None:
+        raise ValueError("Default rule not found in phenotype rules.")
+
+    out_path.write_text("\n".join(rules_out + [default_line]) + "\n")
+    return len(rules_out)
+
+
+def run_postprocess(postprocess_bin: str, conf_path: str, ruleset_path: Path,
+                    train_arff: Path, test_arff: Path, cwd: Path) -> str:
+    cmd = [postprocess_bin, conf_path, str(ruleset_path), str(train_arff), str(test_arff)]
+    # print(f"Running RPE postprocess: {' '.join(cmd)}")
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    if proc.returncode != 0:
+        raise RuntimeError(f"postprocess failed (rc={proc.returncode}):\n{proc.stderr}")
+    return proc.stdout
+
+
+def extract_rpe_rules_from_stdout(pp_stdout: str) -> List[str]:
+    """
+    Conservative heuristic: keep lines that look like BioHEL rules + default.
+    """
+    lines = pp_stdout.splitlines()
+    out: List[str] = []
+    in_pheno = False
+    for ln in lines:
+        if ln.startswith("Phenotype:"):
+            in_pheno = True
+            continue
+        if in_pheno:
+            if not ln.strip():
+                break
+            if ln.startswith("Total"):
+                break
+            out.append(ln.rstrip())
+    return out
 
 
 # -----------------------------
 # Main
 # -----------------------------
 def main(argv):
-    parser = argparse.ArgumentParser(description="BioHEL HPC Job: one CV fold + one seed")
+    parser = argparse.ArgumentParser(description="BioHEL job: one CV fold + one seed (+ optional RPE)")
 
     parser.add_argument("--d", dest="full_data_path", type=str, required=True,
                         help="Path to training fold: <dataset>_CV_Train_k.txt")
     parser.add_argument("--o", dest="outputPath", type=str, required=True,
-                        help="Output directory for this fold")
+                        help="Output directory for this seed+cv fold")
 
-    parser.add_argument("--biohel", dest="biohel_bin", type=str, required=True,
-                        help="BioHEL binary path or command on PATH")
+    parser.add_argument("--biohel", dest="biohel_bin", type=str, default="./biohel")
+
+    parser.add_argument("--enable_rpe", dest="enable_rpe", action="store_true")
+    parser.add_argument("--postprocess_bin", dest="postprocess_bin", type=str, default="./postprocess")
+    parser.add_argument("--postprocess_conf", dest="postprocess_conf", type=str, default="./postprocess.conf")
 
     parser.add_argument("--ol", dest="outcome_label", type=str, default="Class")
     parser.add_argument("--il", dest="instanceID_label", type=str, default="InstanceID")
@@ -298,136 +330,163 @@ def main(argv):
 
     opts = parser.parse_args(argv[1:])
 
-    full_data_path = opts.full_data_path
-    outputPath = Path(opts.outputPath)
-    outputPath.mkdir(parents=True, exist_ok=True)
+    train_path = opts.full_data_path
+    test_path = train_path.replace("Train", "Test")
+    if not os.path.exists(test_path):
+        raise FileNotFoundError(f"Expected test fold at: {test_path}")
 
-    biohel_bin = opts.biohel_bin
+    outdir = Path(opts.outputPath)
+    outdir.mkdir(parents=True, exist_ok=True)
+
     outcome_label = opts.outcome_label
     instanceID_label = opts.instanceID_label
     excluded_column = opts.excluded_column
     seed = int(opts.random_state)
 
-    test_data_path = full_data_path.replace("Train", "Test")
-    if not os.path.exists(test_data_path):
-        raise FileNotFoundError(f"Expected test fold at: {test_data_path}")
-
-    # Load data
-    train_df = load_df(full_data_path)
-    test_df = load_df(test_data_path)
+    # Load raw dataframes (used for deterministic evaluation + coverage)
+    train_df = load_df(train_path)
+    test_df = load_df(test_path)
 
     # Build ARFF + config
     feature_names = build_feature_names(train_df, outcome_label, instanceID_label, excluded_column)
 
-    train_arff = outputPath / "train.arff"
-    test_arff = outputPath / "test.arff"
-    conf_path = outputPath / "config.conf"
+    train_arff = outdir / "train.arff"
+    test_arff = outdir / "test.arff"
+    conf_path = outdir / "config.conf"
 
     convert_to_arff(train_df, feature_names, outcome_label, train_arff, relation_name="Train")
     convert_to_arff(test_df, feature_names, outcome_label, test_arff, relation_name="Test")
     create_biohel_config(conf_path, seed=seed)
 
     # Run BioHEL
-    cmd = [biohel_bin, str(conf_path), str(train_arff), str(test_arff)]
-    start = time.time()
-    proc = subprocess.run(cmd, cwd=str(outputPath), capture_output=True, text=True)
-    wall_time = time.time() - start
+    cmd = [opts.biohel_bin, str(conf_path), str(train_arff), str(test_arff)]
+    t0 = time.time()
+    # print(f"Running BioHEL: {' '.join(cmd)}")
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    wall_time = time.time() - t0
 
-    (outputPath / "biohel_stdout.txt").write_text(proc.stdout)
-    (outputPath / "biohel_stderr.txt").write_text(proc.stderr)
+    (outdir / "biohel_stdout.txt").write_text(proc.stdout)
+    (outdir / "biohel_stderr.txt").write_text(proc.stderr)
 
     if proc.returncode != 0:
-        raise RuntimeError(f"BioHEL failed (code {proc.returncode}). See biohel_stderr.txt")
+        raise RuntimeError(f"BioHEL failed (rc={proc.returncode}). See biohel_stderr.txt")
 
-    metrics = parse_biohel_metrics(proc.stdout, wall_time)
+    # Extract phenotype rules (raw)
+    phenotype_lines = extract_phenotype_rules(proc.stdout)
+    (outdir / "rules_raw.txt").write_text("\n".join(phenotype_lines) + ("\n" if phenotype_lines else ""))
 
-    # Persist exact rule block
-    raw_rules = metrics.get("rules", [])
-    (outputPath / "rules_raw.txt").write_text("\n".join(raw_rules) + ("\n" if raw_rules else ""))
+    # Compute raw evaluation from raw rules (deterministic)
+    rules_lines_for_eval = []
+    for ln in phenotype_lines:
+        s = ln.strip()
+        if not s:
+            continue
+        rules_lines_for_eval.append(s)
 
-    # Save rules.csv (raw strings)
-    if raw_rules:
-        pd.DataFrame({"Rule": raw_rules}).to_csv(outputPath / "rules.csv", index=False)
+    rules_raw, default_raw = parse_ruleset_lines(rules_lines_for_eval)
 
-    # Parse rules + compute coverage
-    rules, default_rule = parse_biohel_rules(raw_rules)
     excluded_cols = [excluded_column, instanceID_label, outcome_label]
 
-    cov_train = compute_rule_coverage(train_df, rules, excluded_cols)
-    cov_test = compute_rule_coverage(test_df, rules, excluded_cols)
+    yhat_train_raw, covered_train_raw = apply_ruleset_predict(train_df, rules_raw, default_raw, excluded_cols)
+    yhat_test_raw, covered_test_raw = apply_ruleset_predict(test_df, rules_raw, default_raw, excluded_cols)
 
-    metrics["train_coverage"] = cov_train["coverage"]
-    metrics["test_coverage"] = cov_test["coverage"]
-    metrics["train_default_rate"] = cov_train["default_rate"]
-    metrics["test_default_rate"] = cov_test["default_rate"]
+    y_train = train_df[outcome_label].astype(int).values
+    y_test = test_df[outcome_label].astype(int).values
 
-    # Save parsed rules as a structured table
-    if rules or default_rule:
-        rows = []
-        for r in rules:
-            rows.append(
-                {
-                    "rule_id": r.rule_id,
-                    "is_default": False,
-                    "prediction": r.prediction,
-                    "conditions_json": json.dumps(r.conditions, sort_keys=True),
-                    "n_conditions": len(r.conditions),
-                }
-            )
-        if default_rule is not None:
-            rows.append(
-                {
-                    "rule_id": default_rule.rule_id,
-                    "is_default": True,
-                    "prediction": default_rule.prediction,
-                    "conditions_json": json.dumps({}, sort_keys=True),
-                    "n_conditions": 0,
-                }
-            )
-        pd.DataFrame(rows).sort_values(["is_default", "rule_id"]).to_csv(outputPath / "rules_parsed.csv", index=False)
+    train_acc_raw = float(np.mean(yhat_train_raw == y_train))
+    test_acc_raw = float(np.mean(yhat_test_raw == y_test))
+    train_cov_raw = coverage_from_covered(covered_train_raw)
+    test_cov_raw = coverage_from_covered(covered_test_raw)
 
-    # Save per-rule match diagnostics
-    if rules:
-        per_rule_match_counts(train_df, rules, excluded_cols).to_csv(outputPath / "train_rule_match_counts.csv", index=False)
-        per_rule_match_counts(test_df, rules, excluded_cols).to_csv(outputPath / "test_rule_match_counts.csv", index=False)
+    num_rules_raw = len(rules_raw)
 
-    # Save metrics.json
-    with open(outputPath / "metrics.json", "w") as f:
-        json.dump(
-            {
-                "train_file": full_data_path,
-                "test_file": test_data_path,
-                "seed": seed,
-                "metrics": metrics,
-            },
-            f,
-            indent=2,
-        )
+    # Parse BioHEL-reported runtime (optional; not used for correctness)
+    train_acc_reported, test_acc_reported, runtime_reported = parse_biohel_train_test_accuracy(proc.stdout)
 
-    # Sentinel row CSV (used by main/check/resub + summary)
-    row = {
-        "train_file": full_data_path,
-        "test_file": test_data_path,
+    raw_row = {
+        "train_file": train_path,
+        "test_file": test_path,
         "seed": seed,
-        "train_accuracy": metrics.get("train_accuracy"),
-        "test_accuracy": metrics.get("test_accuracy"),
-        "train_coverage": metrics.get("train_coverage"),
-        "test_coverage": metrics.get("test_coverage"),
-        "train_default_rate": metrics.get("train_default_rate"),
-        "test_default_rate": metrics.get("test_default_rate"),
-        "num_rules": metrics.get("num_rules"),
-        "runtime": metrics.get("runtime"),
-        "wall_time": metrics.get("wall_time"),
+
+        "train_accuracy": train_acc_raw,
+        "test_accuracy": test_acc_raw,
+        "train_coverage": train_cov_raw,
+        "test_coverage": test_cov_raw,
+        "train_default_rate": float(1.0 - train_cov_raw),
+        "test_default_rate": float(1.0 - test_cov_raw),
+
+        "num_rules": int(num_rules_raw),
+
+        "runtime": runtime_reported,
+        "wall_time": float(wall_time),
+
+        # trace: what BioHEL printed (if present)
+        "train_accuracy_reported": train_acc_reported,
+        "test_accuracy_reported": test_acc_reported,
     }
-    pd.DataFrame([row]).to_csv(outputPath / "result_row.csv", index=False)
+
+    pd.DataFrame([raw_row]).to_csv(outdir / "result_row_raw.csv", index=False)
+
+    # Optional: run RPE and use postprocessed rules as "final"
+    final_row = dict(raw_row)
+    final_row["postprocess_wall_time"] = None
+    final_row["postprocess_num_rules"] = None
+
+    if opts.enable_rpe:
+        ruleset_path = outdir / "ruleset_for_rpe.txt"
+        write_ruleset_for_rpe(phenotype_lines, ruleset_path)
+
+        t1 = time.time()
+        pp_stdout = run_postprocess(
+            postprocess_bin=opts.postprocess_bin,
+            conf_path=opts.postprocess_conf,
+            ruleset_path=ruleset_path,
+            train_arff=train_arff,
+            test_arff=test_arff,
+            cwd=outdir,
+        )
+        pp_wall = time.time() - t1
+
+        (outdir / "postprocess_stdout.txt").write_text(pp_stdout)
+
+        pp_rules_lines = extract_rpe_rules_from_stdout(pp_stdout)
+        (outdir / "rules_postprocessed.txt").write_text("\n".join(pp_rules_lines) + ("\n" if pp_rules_lines else ""))
+
+        # Deterministic evaluation from postprocessed rules
+        rules_pp, default_pp = parse_ruleset_lines(pp_rules_lines)
+
+        yhat_train_pp, covered_train_pp = apply_ruleset_predict(train_df, rules_pp, default_pp, excluded_cols)
+        yhat_test_pp, covered_test_pp = apply_ruleset_predict(test_df, rules_pp, default_pp, excluded_cols)
+
+        train_acc_pp = float(np.mean(yhat_train_pp == y_train))
+        test_acc_pp = float(np.mean(yhat_test_pp == y_test))
+        train_cov_pp = coverage_from_covered(covered_train_pp)
+        test_cov_pp = coverage_from_covered(covered_test_pp)
+
+        final_row.update({
+            "train_accuracy": train_acc_pp,
+            "test_accuracy": test_acc_pp,
+            "train_coverage": train_cov_pp,
+            "test_coverage": test_cov_pp,
+            "train_default_rate": float(1.0 - train_cov_pp),
+            "test_default_rate": float(1.0 - test_cov_pp),
+            "num_rules": int(len(rules_pp)),
+            "postprocess_wall_time": float(pp_wall),
+            "postprocess_num_rules": int(len(rules_pp)),
+        })
+
+    # Write final sentinel row used by summary + check/resub logic
+    pd.DataFrame([final_row]).to_csv(outdir / "result_row.csv", index=False)
+
+    # Write a metrics.json for convenience
+    (outdir / "metrics.json").write_text(json.dumps({"raw": raw_row, "final": final_row}, indent=2) + "\n")
 
     if opts.verbose:
         print(
-            "Done.",
-            f"seed={seed}",
-            f"test_acc={row['test_accuracy']}",
-            f"test_cov={row['test_coverage']}",
-            f"rules={row['num_rules']}",
+            f"Done seed={seed} "
+            f"test_acc={final_row['test_accuracy']:.4f} "
+            f"test_cov={final_row['test_coverage']:.4f} "
+            f"rules={final_row['num_rules']}"
         )
 
     return 0
