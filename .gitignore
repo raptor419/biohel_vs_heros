@@ -3,3 +3,4 @@ postprocessing.tar.gz
 *.pyc
 __pycache__/
 biohel_data/
+output/

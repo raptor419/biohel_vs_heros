@@ -1,0 +1,2 @@
+python biohel_main.py --project BioHELExp --out-path ../output/
+python biohel_summary.py --project BioHELExp --out-path ../output/
