@@ -68,9 +68,9 @@ def main(argv):
                         help="Path to BioHEL_<analysis> output folder (contains dataset subfolders)")
 
     # Keep these args for interface parity with HEROS (not strictly needed for BioHEL summary)
-    parser.add_argument("--ol", dest="outcome_label", type=str, default="Class")
-    parser.add_argument("--il", dest="instanceID_label", type=str, default="InstanceID")
-    parser.add_argument("--el", dest="excluded_column", type=str, default="Group")
+    # parser.add_argument("--ol", dest="outcome_label", type=str, default="Class")
+    # parser.add_argument("--il", dest="instanceID_label", type=str, default="InstanceID")
+    # parser.add_argument("--el", dest="excluded_column", type=str, default="Group")
 
     # Experiment Parameters
     parser.add_argument("--cv", dest="cv_partitions", type=int, default=10)

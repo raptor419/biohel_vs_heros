@@ -29,7 +29,7 @@ def main(argv):
                         help="LSF queue or Slurm partition")
     parser.add_argument("--python", dest="python_cmd", type=str, default="python",
                         help="Python executable")
-    parser.add_argument("--job", dest="job_script", type=str, default="job_summary_biohel_hpc.py",
+    parser.add_argument("--job", dest="job_script", type=str, default="job_biohel_sum_hpc.py",
                         help="Summary worker script")
 
     parser.add_argument("--plots", dest="plots", action="store_true",

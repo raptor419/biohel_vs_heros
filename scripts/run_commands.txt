@@ -30,6 +30,20 @@ python job_biohel_hpc.py \
   --el Group \
   --rs 0 \
   --v
+
+# ------------------------------------------------------------
+# RIPPER single-fold debug run (no HPC)
+# ------------------------------------------------------------
+python job_ripper_hpc.py \
+  --d /project/kamoun_shared/data_shared/heros_sim_data/multiplexer_data_cv/A_multiplexer_6_bit_500_inst/A_multiplexer_6_bit_500_inst_CV_Train_1.txt \
+  --o /project/kamoun_shared/output_shared/ripper_debug/A_multiplexer_6_bit_500_inst/seed_0/cv_1 \
+  --ol Class \
+  --il InstanceID \
+  --el Group \
+  --rs 0 \
+  --verbosity 0 \
+  --v
+
   
 
 
@@ -67,6 +81,42 @@ python run_biohel_hpc.py \
   --cv 10 \
   --r 20
 
+
+# ------------------------------------------------------------
+# RIPPER Training on HPC (LSF)
+# ------------------------------------------------------------
+
+# MULTIPLEXER DATA (seed x CV jobs)
+python run_ripper_hpc.py \
+  --d /project/kamoun_shared/data_shared/heros_sim_data/multiplexer_data_cv \
+  --w /project/kamoun_shared/output_shared/ripper_gecco \
+  --o multiplexer_cv \
+  --ol Class \
+  --il InstanceID \
+  --el Group \
+  --rc LSF \
+  --rm 4 \
+  --q i2c2_normal \
+  --cv 10 \
+  --r 20 \
+  --verbosity 0
+
+# GAMETES DATA
+python run_ripper_hpc.py \
+  --d /project/kamoun_shared/data_shared/heros_sim_data/gametes_data_cv \
+  --w /project/kamoun_shared/output_shared/ripper_gecco \
+  --o gametes_cv \
+  --ol Class \
+  --il InstanceID \
+  --el Model \
+  --rc LSF \
+  --rm 4 \
+  --q i2c2_normal \
+  --cv 10 \
+  --r 20 \
+  --verbosity 0
+
+
 # ------------------------------------------------------------
 # BioHEL SUMMARY AND FIGURES (one summary job)
 # ------------------------------------------------------------
@@ -79,10 +129,7 @@ python run_biohel_sum_hpc.py \
   --rm 4 \
   --q i2c2_normal \
   --cv 10 \
-  --r 20 \
-  --ol Class \
-  --il InstanceID \
-  --el Group
+  --r 20
 
 # GAMETES SUMMARY
 python run_biohel_sum_hpc.py \
@@ -92,8 +139,35 @@ python run_biohel_sum_hpc.py \
   --rm 4 \
   --q i2c2_normal \
   --cv 10 \
+  --r 20
+
+
+
+# ------------------------------------------------------------
+# BioHEL SUMMARY AND FIGURES (one summary job)
+# ------------------------------------------------------------
+
+# MULTIPLEXER SUMMARY
+python run_ripper_sum_hpc.py \
+  --w /project/kamoun_shared/output_shared/ripper_gecco \
+  --o multiplexer_cv \
+  --rc LSF \
+  --rm 4 \
+  --q i2c2_normal \
+  --cv 10 \
   --r 20 \
-  --ol Class \
-  --il InstanceID \
-  --el Model
+  --plots
+
+# GAMETES SUMMARY
+python run_ripper_sum_hpc.py \
+  --w /project/kamoun_shared/output_shared/ripper_gecco \
+  --o gametes_cv \
+  --rc LSF \
+  --rm 4 \
+  --q i2c2_normal \
+  --cv 10 \
+  --r 20 \
+  --plots
+
+
 

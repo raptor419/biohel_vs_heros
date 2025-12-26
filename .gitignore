@@ -4,3 +4,4 @@ postprocessing.tar.gz
 __pycache__/
 biohel_data/
 output/
+sshv.sh
