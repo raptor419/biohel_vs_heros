@@ -78,7 +78,7 @@ def main(argv):
     resubmit = bool(opts.resubmit)
     verbose = bool(opts.verbose)
 
-    algorithm = "BioHELPP"
+    algorithm = "BioHEL"
 
     # Folder management
     writepath.mkdir(parents=True, exist_ok=True)

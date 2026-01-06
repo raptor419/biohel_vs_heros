@@ -25,7 +25,7 @@ def main(argv):
                         help="Cluster type: LSF, SLURM, or LOCAL")
     parser.add_argument("--rm", dest="reserved_memory", type=int, default=4,
                         help="Reserved memory (GB)")
-    parser.add_argument("--q", dest="queue", type=str, default="normal",
+    parser.add_argument("--q", dest="queue", type=str, default="i2c2_normal",
                         help="LSF queue or Slurm partition")
     parser.add_argument("--python", dest="python_cmd", type=str, default="python",
                         help="Python executable")
@@ -116,6 +116,7 @@ def submit_lsf_cluster_job(
         sh.write("#!/bin/bash\n")
         sh.write("#BSUB -q " + queue + "\n")
         sh.write("#BSUB -J " + job_name + "\n")
+        sh.write("#BSUB -n 1\n")
         sh.write('#BSUB -R "rusage[mem=' + str(reserved_memory) + 'G]"\n')
         sh.write("#BSUB -M " + str(reserved_memory) + "GB\n")
         sh.write("#BSUB -o " + os.path.join(logPath, job_name) + ".o\n")
