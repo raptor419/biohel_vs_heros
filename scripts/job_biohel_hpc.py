@@ -59,16 +59,16 @@ default class major
 fitness function mdl
 initialization min classifiers 20
 initialization max classifiers 20
-iterations 50
+iterations 2000
 mdl initial tl ratio 0.25
-mdl iteration 10
+mdl iteration 50
 mdl weight relax factor 0.90
-pop size 500
-prob crossover 0.6
-prob individual mutation 0.6
+pop size 2000
+prob crossover 0.8
+prob individual mutation 0.1
 prob one 0.75
 selection algorithm tournamentwor
-tournament size 4
+tournament size 5
 windowing ilas 1
 dump evolution stats
 smart init

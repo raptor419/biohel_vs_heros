@@ -151,7 +151,7 @@ def main(argv):
     y_test = test_df[outcome_label].astype(int).values
 
     # Train RIPPER
-    model = RIPPER(random_state=seed, verbosity=opts.verbosity)
+    model = RIPPER(k=20, random_state=seed, verbosity=opts.verbosity)
 
     t0 = time.time()
     model.fit(X_train, y_train)

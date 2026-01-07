@@ -143,19 +143,6 @@ python run_ripper_hpc.py \
 # ------------------------------------------------------------
 # RIPPER Training on HPC (LSF) – GAMETES (seed × CV)
 # ------------------------------------------------------------
-python run_ripper_hpc.py \
-  --d /project/kamoun_shared/data_shared/heros_sim_data/gametes_data_cv \
-  --w /project/kamoun_shared/output_shared/ripper_gecco \
-  --o gametes_cv \
-  --ol Class \
-  --il InstanceID \
-  --el Model \
-  --rc LSF \
-  --rm 4 \
-  --q i2c2_normal \
-  --cv 10 \
-  --r 20 \
-  --verbosity 0
 
 
 

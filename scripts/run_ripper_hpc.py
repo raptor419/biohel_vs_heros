@@ -185,7 +185,10 @@ def _submit_one(run_cluster, writepath: Path, reserved_memory: int, queue: str,
         if run_cluster == "LSF":
             sh.write(f"#BSUB -q {queue}\n")
             sh.write(f"#BSUB -J {job_name}\n")
-            sh.write(f'#BSUB -R "rusage[mem={reserved_memory}G]"\n')
+            sh.write("#BSUB -n 1\n")
+            sh.write(f'#BSUB -R "select[type==local] span[hosts=1] rusage[mem={reserved_memory}G]"\n')
+            # sh.write(f'#BSUB -R "span[hosts=1] rusage[mem={reserved_memory}G]"\n')
+            # sh.write(f'#BSUB -R "rusage[mem={reserved_memory}G]"\n')
             sh.write(f"#BSUB -M {reserved_memory}GB\n")
             sh.write(f"#BSUB -o {logPath}/{job_name}.o\n")
             sh.write(f"#BSUB -e {logPath}/{job_name}.e\n")
