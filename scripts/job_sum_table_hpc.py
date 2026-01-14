@@ -247,8 +247,8 @@ def ideal_solution_k_over_n(sub: pd.DataFrame, dataset: str, scenario:str) -> st
     acc = pd.to_numeric(sub["test_accuracy"], errors="coerce")
     rules = pd.to_numeric(sub["rule_count"], errors="coerce")
     n = int(sub.shape[0])
-    ideal_count = IDEAL_COUNTS[dataset] if scenario != "RIPPER" else IDEAL_COUNTS[dataset]
-    k = int(((acc == IDEAL_ACC) & (rules == IDEAL_COUNTS[dataset])).sum())
+    ideal_count = IDEAL_COUNTS[dataset] if scenario != "RIPPER" else IDEAL_COUNTS[dataset] - 1
+    k = int(((acc == IDEAL_ACC) & (rules == ideal_count)).sum())
     return f"{k}/{n}"
 
 
