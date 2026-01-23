@@ -191,10 +191,26 @@ python run_ripper_sum_hpc.py \
 # Final Paper Tables
 ############################################################
 
-  python job_sum_table_hpc.py \
-    --biohel_root /project/kamoun_shared/output_shared/biohel_gecco \
-    --ripper_root /project/kamoun_shared/output_shared/ripper_gecco \
-    --out /project/kamoun_shared/output_shared/paper_tables
+#  For Primary Empherical Performance Tables
+python job_sum_table_hpc.py \
+  --biohel_root /project/kamoun_shared/output_shared/biohel_gecco \
+  --ripper_root /project/kamoun_shared/output_shared/ripper_gecco \
+  --out /project/kamoun_shared/output_shared/paper_tables
+
+#  For Statistic Significance Test Tables
+## Runs from HEROS has to be complete
+
+python stats_scripts/combine_heros_for_stats.py \
+  --root /project/kamoun_shared/gabe/I2C2-Documentation/output \
+  --outdir /project/kamoun_shared/output_shared/paper_tables \
+  --outname combined_heros_cv_default_runs_long.csv
+
+python stats_scripts/job_statistical_test.py \
+  --heros_csv /project/kamoun_shared/output_shared/paper_tables/combined_heros_cv_default_runs_long.csv \
+  --other_csv /project/kamoun_shared/output_shared/paper_tables/combined_runs_long.csv \
+  --outdir /project/kamoun_shared/output_shared/paper_tables \
+  --prefix heros_baseline_wilcoxon \
+  --alpha 0.05
 
 
 ############################################################

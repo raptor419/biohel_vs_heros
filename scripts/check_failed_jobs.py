@@ -91,7 +91,7 @@ class LogFinding:
     reasons: List[str]
 
 
-def read_tail(path: Path, max_bytes: int = 200_000) -> str:
+def read_tail(path: Path, max_bytes: int = 200000) -> str:
     """
     Read up to max_bytes from the end of a file (fast for big logs).
     """
