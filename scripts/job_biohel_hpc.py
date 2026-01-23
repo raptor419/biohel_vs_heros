@@ -33,6 +33,73 @@ def build_feature_names(df: pd.DataFrame, outcome_label: str, instanceID_label: 
     return cols
 
 
+def infer_arff_schema(train_df: pd.DataFrame, feature_names: List[str], outcome_label: str) -> Tuple[Dict[str, List[int]], List[int]]:
+    """
+    Infer ARFF nominal domains from TRAIN ONLY (prevents test peeking and guarantees consistent schema).
+    Returns:
+      feat_domains: dict feat -> sorted list of allowed int values
+      class_domain: sorted list of allowed int class values
+    """
+    feat_domains: Dict[str, List[int]] = {}
+    for feat in feature_names:
+        vals = sorted(pd.Series(train_df[feat]).dropna().astype(int).unique().tolist())
+        feat_domains[feat] = vals
+
+    class_domain = sorted(pd.Series(train_df[outcome_label]).dropna().astype(int).unique().tolist())
+    return feat_domains, class_domain
+
+
+def write_arff_with_schema(
+    df: pd.DataFrame,
+    feature_names: List[str],
+    outcome_label: str,
+    filename: Path,
+    relation_name: str,
+    feat_domains: Dict[str, List[int]],
+    class_domain: List[int],
+    unknown_as_missing: bool = True,
+) -> None:
+    """
+    Write ARFF using a fixed schema (domains), typically inferred from TRAIN.
+    If unknown_as_missing=True, any value not in the domain is written as '?'.
+    """
+    with open(filename, "w") as f:
+        f.write(f"@RELATION {relation_name}\n\n")
+
+        for feat in feature_names:
+            dom = feat_domains[feat]
+            value_str = ",".join(map(str, dom))
+            f.write(f"@ATTRIBUTE {feat} {{{value_str}}}\n")
+
+        class_str = ",".join(map(str, class_domain))
+        f.write(f"@ATTRIBUTE {outcome_label} {{{class_str}}}\n\n")
+
+        f.write("@DATA\n")
+        for _, row in df.iterrows():
+            vals_out: List[str] = []
+            for feat in feature_names:
+                v = int(row[feat])
+                if v in feat_domains[feat]:
+                    vals_out.append(str(v))
+                else:
+                    if unknown_as_missing:
+                        vals_out.append("?")
+                    else:
+                        raise ValueError(f"Value {v} for feature '{feat}' not in TRAIN domain {feat_domains[feat]}")
+
+            y = int(row[outcome_label])
+            if y in class_domain:
+                vals_out.append(str(y))
+            else:
+                if unknown_as_missing:
+                    vals_out.append("?")
+                else:
+                    raise ValueError(f"Class value {y} not in TRAIN class domain {class_domain}")
+
+            f.write(",".join(vals_out) + "\n")
+
+
+# Wrong: this peeks at test data to infer schema, which is not allowed.
 def convert_to_arff(df: pd.DataFrame, feature_names: List[str], outcome_label: str, filename: Path, relation_name: str) -> None:
     with open(filename, "w") as f:
         f.write(f"@RELATION {relation_name}\n\n")
@@ -354,8 +421,21 @@ def main(argv):
     test_arff = outdir / "test.arff"
     conf_path = outdir / "config.conf"
 
-    convert_to_arff(train_df, feature_names, outcome_label, train_arff, relation_name="Train")
-    convert_to_arff(test_df, feature_names, outcome_label, test_arff, relation_name="Test")
+    # Infer a single ARFF schema from TRAIN ONLY (consistent header; avoids test peeking)
+    feat_domains, class_domain = infer_arff_schema(train_df, feature_names, outcome_label)
+
+    write_arff_with_schema(
+        train_df, feature_names, outcome_label,
+        filename=train_arff, relation_name="Train",
+        feat_domains=feat_domains, class_domain=class_domain,
+    )
+
+    write_arff_with_schema(
+        test_df, feature_names, outcome_label,
+        filename=test_arff, relation_name="Test",
+        feat_domains=feat_domains, class_domain=class_domain,
+    )
+
     create_biohel_config(conf_path, seed=seed)
 
     # Run BioHEL
