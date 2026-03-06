@@ -170,13 +170,13 @@ def run_tests_and_build_wide(
 
                 _, p_val = mann_whitney_two_sided(base_vals, comp_vals)
 
-                base_med = float(np.median(base_vals))
-                comp_med = float(np.median(comp_vals))
+                base_med = float(np.mean(base_vals))
+                comp_med = float(np.mean(comp_vals))
                 diff = comp_med - base_med
                 direction = (
                     "Comparator higher" if diff > 0 else
                     "Comparator lower" if diff < 0 else
-                    "Tie (median)"
+                    "Tie (mean)"
                 )
 
                 rows.append({
