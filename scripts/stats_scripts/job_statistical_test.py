@@ -196,10 +196,13 @@ def run_tests_and_build_wide(
     if long_df.empty:
         raise RuntimeError("No tests were run; check filters, dataset overlap, and metric mappings.")
 
-    # FDR across ALL tests (dataset×comparator×metric)
-    rej, p_adj, _, _ = multipletests(long_df["p_value"].to_numpy(), alpha=alpha, method="fdr_bh")
-    long_df["p_value_fdr_bh"] = p_adj
-    long_df["significant"] = rej
+    for metric in long_df["Metric"].unique():
+        metric_mask = long_df["Metric"] == metric
+        metric_pvals = long_df.loc[metric_mask, "p_value"].to_numpy()
+        
+        rej, p_adj, _, _ = multipletests(metric_pvals, alpha=alpha, method="fdr_bh")
+        long_df.loc[metric_mask, "p_value_fdr_bh"] = p_adj
+        long_df.loc[metric_mask, "significant"] = rej
 
     # Build wide by columns per metric (p, fdr, dir), with Algorithm+Scenario as columns (per row)
     wide = long_df.pivot_table(
