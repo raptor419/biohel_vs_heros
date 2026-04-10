@@ -20,7 +20,7 @@ def is_cv_default(path: Path) -> bool:
     Exclude cv_equal, tree_init, fb_tree_init, etc.
     """
     p = str(path)
-    return ("cv_default" in p) and ("cv_equal" not in p) and ("tree_init" not in p)
+    return ("cv_default" in p) and ("cv_equal" not in p) and ("tree_init" not in p) and ("tree_bstrap" not in p)
 
 
 def parse_metadata(csv_path: Path) -> dict:
